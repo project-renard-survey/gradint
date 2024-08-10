@@ -5,7 +5,7 @@
 # cantonese.py - Python functions for processing Cantonese transliterations
 # (uses eSpeak and Gradint for help with some of them)
 
-# v1.42 (c) 2013-15,2017-23 Silas S. Brown.  License: GPL
+# v1.48 (c) 2013-15,2017-24 Silas S. Brown.  License: GPL
 
 cache = {} # to avoid repeated eSpeak runs,
 # zi -> jyutping or (pinyin,) -> translit
@@ -64,7 +64,7 @@ def hanzi_only(unitext): return u"".join(filter(lambda x:0x4e00<=ord(x)<0xa700 o
 def py2nums(pinyin):
   if not type(pinyin)==type(u""):
     pinyin = pinyin.decode('utf-8')
-  assert pinyin.strip(), "blank pinyin" # saves figuring out a findall TypeError
+  if not pinyin.strip(): return ""
   global pinyin_dryrun
   if pinyin_dryrun:
     pinyin_dryrun = list(pinyin_dryrun)
@@ -91,7 +91,7 @@ def adjust_jyutping_for_pinyin(hanzi,jyutping,pinyin):
   i = 0 ; tones = re.finditer('[1-7]',jyutping) ; j2 = []
   for h,p in zip(list(hanzi),pinyin):
     try: j = getNext(tones).end()
-    except StopIteration: return jyutping # one of the zin has no Cantonese reading, which we'll pick up later on "failed to fix"
+    except StopIteration: return jyutping # one of the hanzi has no Cantonese reading in our data: we'll warn "failed to fix" below
     j2.append(jyutping[i:j]) ; i = j
     if h in py2j and p.lower() in py2j[h]: j2[-1]=j2[-1][:re.search("[A-Za-z]*[1-7]$",j2[-1]).start()]+py2j[h][p.lower()]
   return "".join(j2)+jyutping[i:]
@@ -100,8 +100,9 @@ u"\u4E2D":{"zhong1":"zung1","zhong4":"zung3"},
 u"\u4E3A\u70BA":{"wei2":"wai4","wei4":"wai6"},
 u"\u4E50\u6A02":{"le4":"lok6","yue4":"ngok6"},
 u"\u4EB2\u89AA":{"qin1":"can1","qing4":"can3"},
+u"\u4EC0":{"shen2":"sam6","shi2":"sap6"}, # unless zaap6
 u"\u4F20\u50B3":{"chuan2":"cyun4","zhuan4":"zyun6"},
-u"\u4FBF":{"bian4":"pin4","pian2":"bin6"},
+u"\u4FBF":{"bian4":"bin6","pian2":"pin4"},
 u"\u5047":{"jia3":"gaa2","jia4":"gaa3"},
 u"\u5174\u8208":{"xing1":"hing1","xing4":"hing3"},
 # u"\u5207":{"qie4":"cai3","qie1":"cit3"}, # WRONG (rm'd v1.17).  It's cit3 in re4qie4.  It just wasn't in yiqie4 (which zhy_list has as an exception anyway)
@@ -153,10 +154,10 @@ py2j_chars = re.compile(u'['+''.join(list(py2j.keys()))+']')
 def jyutping_to_lau(j):
   j = S(j).lower().replace("j","y").replace("z","j")
   for k,v in jlRep: j=j.replace(k,v)
-  return j.lower().replace("aa","a").replace("ohek","euk")
+  return j.lower().replace("ohek","euk")
 def jyutping_to_lau_java(jyutpingNo=2,lauNo=1):
   # for annogen.py 3.29+ --annotation-postprocess to ship Jyutping and generate Lau at runtime
-  return 'if(annotNo=='+str(jyutpingNo)+'||annotNo=='+str(lauNo)+'){m=Pattern.compile("<rt>(.*?)</rt>").matcher(r);sb=new StringBuffer();while(m.find()){String r2=(annotNo=='+str(jyutpingNo)+'?m.group(1).replaceAll("([1-7])(.)","$1&shy;$2"):(m.group(1)+" ").toLowerCase().replace("j","y").replace("z","j")'+''.join('.replace("'+k+'","'+v+'")' for k,v in jlRep)+'.toLowerCase().replace("aa","a").replace("ohek","euk").replaceAll("([1-7])","<sup>$1</sup>-").replace("- "," ").replaceAll(" $","")),tmp=m.group(1).substring(0,1);if(annotNo=='+str(lauNo)+'&&tmp.equals(tmp.toUpperCase()))r2=r2.substring(0,1).toUpperCase()+r2.substring(1);m.appendReplacement(sb,"<rt>"+r2+"</rt>");}m.appendTail(sb); r=sb.toString();}' # TODO: can probably go faster with mapping for some of this
+  return 'if(annotNo=='+str(jyutpingNo)+'||annotNo=='+str(lauNo)+'){m=Pattern.compile("<rt>(.*?)</rt>").matcher(r);sb=new StringBuffer();while(m.find()){String r2=(annotNo=='+str(jyutpingNo)+'?m.group(1).replaceAll("([1-7])(.)","$1&shy;$2"):(m.group(1)+" ").toLowerCase().replace("j","y").replace("z","j")'+''.join('.replace("'+k+'","'+v+'")' for k,v in jlRep)+'.toLowerCase().replace("ohek","euk").replaceAll("([1-7])","<sup>$1</sup>-").replace("- "," ").replaceAll(" $","")),tmp=m.group(1).substring(0,1);if(annotNo=='+str(lauNo)+'&&tmp.equals(tmp.toUpperCase()))r2=r2.substring(0,1).toUpperCase()+r2.substring(1);m.appendReplacement(sb,"<rt>"+r2+"</rt>");}m.appendTail(sb); r=sb.toString();}' # TODO: can probably go faster with mapping for some of this
 def incomplete_lau_to_jyutping(l):
   # incomplete: assumes Lau didn't do the "aa" -> "a" rule
   l = S(l).lower().replace("euk","ohek")
@@ -236,7 +237,10 @@ def jyutping_to_yale_u8(j): # returns space-separated syllables
       z = re.sub(re.escape(x)+r"(.)",r"\1"+y,z)
     return z
   if type(u"")==type(""): U=str # Python 3
-  else: U=unicode # Python 2
+  else: # Python 2
+    def U(x):
+      try: return x.decode('utf-8') # might be an emoji pass-through
+      except: return x # already Unicode
   return unicodedata.normalize('NFC',mysub(U(jyutping_to_yale_TeX(j).replace(r"\i{}","i").replace(r"\I{}","I")),[(r"\`",u"\u0300"),(r"\'",u"\u0301"),(r"\=",u"\u0304")])).encode('utf-8')
 
 def superscript_digits_TeX(j):
@@ -291,6 +295,9 @@ if __name__ == "__main__":
         pinyin = pinyin.decode('utf-8')
       if pinyin and not (pinyin,) in cache:
         pinyin_dryrun.add(pinyin)
+        for w in pinyin.split():
+          for h in w.split('-'):
+            pinyin_dryrun.add(h)
     dryrun_mode = False
     for l in lines:
       if '#' in l: l,pinyin = l.split('#')
@@ -300,7 +307,7 @@ if __name__ == "__main__":
       elif pinyin:
         jyutping = adjust_jyutping_for_pinyin(l,jyutping,pinyin)
         groupLens = [0]
-        for syl,space in re.findall('([A-Za-z]*[1-5])( *)',py2nums(pinyin)):
+        for syl,space in re.findall('([A-Za-z]*[1-5])( *)',' '.join('-'.join(py2nums(h) for h in w.split('-')) for w in pinyin.split())): # doing it this way so we're not relying on espeak transliterate_multiple to preserve spacing and hyphenation
           groupLens[-1] += 1
           if space: groupLens.append(0)
         if not groupLens[-1]: groupLens=groupLens[:-1]
